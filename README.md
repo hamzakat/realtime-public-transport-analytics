@@ -5,8 +5,8 @@ A scalable real-time data processing backend for analyzing high-frequency vehicl
 
 ## Documentation
 
-1. [Conception](docs/1-conception-phase.md)
-2. [Development](docs/2-development-phase.md)
+1. [Conception](docs/1-conception.md)
+2. [Development](docs/2-development.md)
 
 ## Architecture
 
