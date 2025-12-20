@@ -5,7 +5,7 @@ This document overviews the conception phase of building a system that meets the
 The proposed architecture shown in Figure 1 implements a lambda-like pattern (Databricks, n.d.) that serves both real-time streaming analytics and historical querying capabilities. Five distinct microservices coordinate through message-passing and database access patterns, with each component isolated within Docker containers. This separation of concerns enables independent scaling and maintenance while preserving system-wide data flow integrity. The data pipeline begins with ingestion from the external MQTT broker, progresses through a message buffer, undergoes stream processing with windowed aggregations, and terminates at dual sinks: a real-time publication channel and a time-series database. An API service provides controlled access to historical data, completing the architecture's ability to serve both operational monitoring and analytical workloads.
 
 
-```
+```mermaid
 %%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#e3f2fd','primaryTextColor':'#1a1a1a','primaryBorderColor':'#1976d2','lineColor':'#424242','secondaryColor':'#f5f5f5','tertiaryColor':'#fff','fontSize':'14px','fontFamily':'Arial, sans-serif'}}}%%
 
 graph TB
