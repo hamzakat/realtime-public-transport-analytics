@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - test-network
+    volumes:
+      - /var/lib/zookeeper/data
+      - /var/lib/zookeeper/log
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+    networks:
+      - test-network
+    volumes:
+      - /var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "bash", "-c", "kafka-broker-api-versions --bootstrap-server kafka:9093 || exit 1"]
+      interval: 10s
+      timeout: 20s
+      retries: 20
+
+  spark-processor:
+    container_name: hsl-spark-processor
+    build:
+      context: ./spark-processor
+      dockerfile: Dockerfile
+    depends_on:
+      kafka:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9093
+      # MUST match the topics defined in integration-tests service
+      KAFKA_INPUT_TOPIC: hfp-raw-test
+      KAFKA_OUTPUT_TOPIC: hfp-aggregated-test
+      # MUST match the InfluxDB credentials defined in the influxdb service
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: test-token-12345
+      INFLUXDB_ORG: hsl-test
+      INFLUXDB_BUCKET: test_metrics
+      # Lower memory for test environment to save resources
+      SPARK_DRIVER_MEMORY: 1g
+      SPARK_EXECUTOR_MEMORY: 1g
+      LOG_LEVEL: INFO
+    networks:
+      - test-network
+    volumes:
+      - status-volume:/tmp/status
+  influxdb:
+    image: influxdb:2.7
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminpassword
+      DOCKER_INFLUXDB_INIT_ORG: hsl-test
+      DOCKER_INFLUXDB_INIT_BUCKET: test_metrics
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: test-token-12345
+    networks:
+      - test-network
+    volumes:
+      - /var/lib/influxdb2
+      - /etc/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+  integration-tests:
+    build:
+      context: ./integration-tests
+      dockerfile: Dockerfile
+    depends_on:
+      - kafka
+      - influxdb
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9093
+      KAFKA_RAW_TOPIC: hfp-raw-test
+      KAFKA_AGGREGATED_TOPIC: hfp-aggregated-test
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: test-token-12345
+      INFLUXDB_ORG: hsl-test
+      INFLUXDB_BUCKET: test_metrics
+      PYTHONUNBUFFERED: 1
+    networks:
+      - test-network
+    volumes:
+      - status-volume:/tmp/status
+    command: ["./wait-for-services.sh", "pytest", "tests/", "-v", "--tb=short", "-s"]
+
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  status-volume:

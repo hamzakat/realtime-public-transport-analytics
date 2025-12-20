@@ -1,0 +1,6 @@
+pyspark==3.5.0
+kafka-python-ng
+influxdb-client==1.38.0
+pandas==2.2.3
+pytest==7.4.3
+pytest-mock==3.12.0
