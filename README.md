@@ -1,7 +1,6 @@
 # Real-Time Public Transport Analytics Platform
 
-A scalable real-time data processing backend for analyzing high-frequency vehicle positioning data from the [Helsinki Region Transport (HSL)](https://www.hsl.fi/en/hsl/open-data) system. The system ingests MQTT telemetry streams at one-second intervals, performs windowed aggregations using Apache Spark, and provides both real-time and historical analytics through a REST API. Built to meet the requirements of Task 2 *“Build a real-time data backend for a data-intensive application”* as a part of the Data Engineering course (DLMDSEDE02) at International University of Applied Sciences.
-
+A scalable real-time data processing backend for analyzing high-frequency vehicle positioning data from the [Helsinki Region Transport (HSL)](https://www.hsl.fi/en/hsl/open-data) system. The system ingests MQTT telemetry streams at one-second intervals, performs windowed aggregations using Apache Spark, and provides both real-time and historical analytics through a secured REST API. Built to meet the requirements of Task 2 *"Build a real-time data backend for a data-intensive application"* as a part of the Data Engineering course (DLMDSEDE02) at International University of Applied Sciences.
 
 ## Documentation
 
@@ -11,7 +10,6 @@ A scalable real-time data processing backend for analyzing high-frequency vehicl
 ## Architecture
 
 The system implements a lambda-like architecture with five microservices:
-
 
 ```mermaid
 %%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#e3f2fd','primaryTextColor':'#1a1a1a','primaryBorderColor':'#1976d2','lineColor':'#424242','secondaryColor':'#f5f5f5','tertiaryColor':'#fff','fontSize':'14px','fontFamily':'Arial, sans-serif'}}}%%
@@ -79,14 +77,12 @@ graph TB
     style G fill:#ffffff,stroke:#9e9e9e,stroke-width:2.5px,color:#616161
 ```
 
-
-
 **Core Components**:
-- **MQTT Ingestor**: Protocol translation from MQTT to Kafka
+- **MQTT Ingestor**: Protocol translation from MQTT to Kafka with structured audit logging
 - **Kafka**: Message buffering and distribution (topics: `hfp-raw`, `hfp-aggregated`)
-- **Spark Streaming**: Windowed aggregations (10s tumbling, 60s sliding windows)
+- **Spark Streaming**: Windowed aggregations (10s tumbling, 60s sliding windows) with processing metrics
 - **InfluxDB**: Time-series persistence for historical queries
-- **FastAPI**: REST interface for analytics queries
+- **FastAPI**: Secured REST interface with API key authentication and rate limiting
 
 ## Tech Stack
 
@@ -96,7 +92,7 @@ graph TB
 | Message Broker | Apache Kafka | 7.5.0 |
 | Stream Processing | Apache Spark | 3.5.0 |
 | Time-Series DB | InfluxDB | 2.7 |
-| API Service | FastAPI | 0.115.0 |
+| API Service | FastAPI + SlowAPI | 0.115.0 / 0.1.9 |
 | Orchestration | Docker Compose | 3.8 |
 
 ## Prerequisites
@@ -105,25 +101,69 @@ graph TB
 - 8GB RAM, 20GB disk space
 - Active internet connection
 
+## Security Features
+
+### API Authentication
+- **API Key Authentication**: All data endpoints require an API key via `X-API-Key` header
+- **Rate Limiting**: 100 requests/minute per endpoint to prevent abuse
+- **Audit Logging**: All API requests logged with timestamps, parameters, and response codes
+
+### Audit Logging
+All components emit structured JSON logs for security and governance:
+- **MQTT Ingestor**: Connection events, subscription confirmations, message statistics
+- **Spark Processor**: Processing metrics, record counts, window computations
+- **API Service**: Request/response audit trail with user identification
+
+
+
 ## Quick Start
 
+### 1. Configure Security
+
+Before starting, set a secure API key in `.env`:
+
+```bash
+# Generate a secure random key (Linux/Mac)
+openssl rand -hex 32
+
+# Or use Python
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
+
+Edit `.env` and update:
+```bash
+API_KEY=your-secure-api-key-here
+REQUIRE_AUTH=true
+```
+
+### 2. Start Services
+
+```bash
 # Start all services
 docker-compose up -d
 
-# Verify system health
+# Verify system health (no auth required)
 curl http://localhost:8000/health
 
 # View logs
 docker-compose logs -f
 
-# Stop services
-docker-compose down
+
+```
+
+### 3. Test Authentication
+
+```bash
+# Set your API key
+export API_KEY="your-secure-api-key-here"
+
+# Query with authentication
+curl -H "X-API-Key: $API_KEY" http://localhost:8000/api/v1/routes
 ```
 
 ## Testing
 
-```
+```bash
 # Unit tests
 docker-compose run --rm mqtt-ingestor pytest tests/ -v
 docker-compose run --rm spark-processor pytest tests/ -v
@@ -138,40 +178,48 @@ docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
 
 **Base URL**: `http://localhost:8000`
 
+### Public Endpoints (No Authentication)
 - `GET /health` - System health status
+- `GET /` - API information
+
+### Protected Endpoints (Require X-API-Key Header)
 - `GET /api/v1/routes` - List available routes
 - `GET /api/v1/metrics` - Query aggregated metrics
   - Query params: `route`, `direction`, `window_type`, `start_time`, `end_time`, `limit`
 - `GET /api/v1/routes/{route}/stats` - Route-specific statistics
 
-**Interactive Documentation**: http://localhost:8000/docs
+**Rate Limits**: 100 requests/minute per endpoint
 
+**Interactive Documentation**: http://localhost:8000/docs
 
 ## Example API Queries
 
-All examples assume the stack is running locally via `docker-compose up -d`.
+All examples assume the stack is running locally and you have set your API key:
 
-```
-# 1. Health check (service + InfluxDB)
+```bash
+# Set your API key
+export API_KEY="your-secure-api-key-here"
+
+# 1. Health check (no auth required)
 curl "http://localhost:8000/health"
 
-# 2. List all routes with available data
-curl "http://localhost:8000/api/v1/routes"
+# 2. List all routes (requires auth)
+curl -H "X-API-Key: $API_KEY" "http://localhost:8000/api/v1/routes"
 
-# 3. Get recent metrics for a specific route (any direction, any window type)
-curl "http://localhost:8000/api/v1/metrics?route=114&limit=1000"
+# 3. Get recent metrics for a specific route
+curl -H "X-API-Key: $API_KEY" "http://localhost:8000/api/v1/metrics?route=114&limit=1000"
 
 # 4. Get only sliding-window metrics (60s window, 10s slide)
-curl "http://localhost:8000/api/v1/metrics?route=114&window_type=sliding_60s&limit=1000"
+curl -H "X-API-Key: $API_KEY" "http://localhost:8000/api/v1/metrics?route=114&window_type=sliding_60s&limit=1000"
 
 # 5. Get only tumbling-window metrics (10s non-overlapping)
-curl "http://localhost:8000/api/v1/metrics?route=114&window_type=tumbling_10s&limit=1000"
+curl -H "X-API-Key: $API_KEY" "http://localhost:8000/api/v1/metrics?route=114&window_type=tumbling_10s&limit=1000"
 
 # 6. Filter by route, direction and time range (ISO 8601 timestamps, UTC)
-curl "http://localhost:8000/api/v1/metrics?route=114&direction=1&start_time=2025-12-20T12:00:00Z&end_time=2025-12-20T13:00:00Z&limit=500"
+curl -H "X-API-Key: $API_KEY" "http://localhost:8000/api/v1/metrics?route=114&direction=1&start_time=2025-12-20T12:00:00Z&end_time=2025-12-20T13:00:00Z&limit=500"
 
 # 7. Get aggregated statistics for a single route
-curl "http://localhost:8000/api/v1/routes/114/stats?start_time=2025-12-20T12:00:00Z&end_time=2025-12-20T13:00:00Z"
+curl -H "X-API-Key: $API_KEY" "http://localhost:8000/api/v1/routes/114/stats?start_time=2025-12-20T12:00:00Z&end_time=2025-12-20T13:00:00Z"
 ```
 
 ## Project Structure
@@ -180,25 +228,133 @@ curl "http://localhost:8000/api/v1/routes/114/stats?start_time=2025-12-20T12:00:
 realtime-data-pipeline/
 ├── docker-compose.yml              # Service orchestration
 ├── docker-compose.test.yml         # Test environment
-├── .env                            # Configuration
+├── .env                            # Configuration (includes API_KEY)
 ├── mqtt-ingestor/                  # MQTT → Kafka ingestion
 ├── spark-processor/                # Stream processing & aggregation
 ├── api-service/                    # REST API for queries
 ├── integration-tests/              # End-to-end tests
-└── docs                            # Documentation
+└── docs/                           # Documentation
 ```
-
 
 ## Configuration
 
 Edit `.env` to customize:
 
-```
+```bash
+# Security Configuration (REQUIRED)
+API_KEY=your-secure-random-key-here
+REQUIRE_AUTH=true
+
 # MQTT subscription filter
 MQTT_TOPIC=/hfp/v2/journey/+/+/+/+/+/+/+/+/+/+/+/+/+/+/#
 
 # Memory allocation
 SPARK_DRIVER_MEMORY=2g
 SPARK_EXECUTOR_MEMORY=2g
+
+# Logging
+LOG_LEVEL=INFO  # Options: DEBUG, INFO, WARN, ERROR
+```
+
+## Security Best Practices
+
+1. **API Key Management**
+   - Generate a strong random key (32+ characters)
+   - Never commit API keys to version control
+   - Rotate keys periodically
+   - Use environment variables for deployment
+
+2. **Audit Logging**
+   - Review logs regularly for suspicious activity
+   - Archive logs for compliance requirements
+   - Monitor for failed authentication attempts
+
+3. **Rate Limiting**
+   - Default: 100 req/min per endpoint
+   - Adjust in code if needed for your use case
+   - Monitor for rate limit violations
+
+4. **Network Security**
+   - API exposed on localhost by default
+   - Use reverse proxy (nginx) for production
+   - Enable TLS/HTTPS in production
+   - Restrict Docker network access
+
+## Monitoring Audit Logs
+
+View real-time audit logs:
+
+```bash
+# API request audit trail
+docker-compose logs -f api-service | grep "event_type"
+
+# MQTT ingestion statistics
+docker-compose logs -f mqtt-ingestor | grep "event_type"
+
+# Spark processing metrics
+docker-compose logs -f spark-processor | grep "event_type"
+```
+
+Example audit log entry:
+```json
+{
+  "timestamp": "2025-12-20T16:30:45.123Z",
+  "service": "api-service",
+  "event_type": "api_request",
+  "method": "GET",
+  "path": "/api/v1/metrics",
+  "query_params": {"route": "114"},
+  "client_ip": "172.18.0.1",
+  "user_id": "authenticated",
+  "response_code": 200
+}
+```
+
+## Troubleshooting
+
+### Authentication Issues
+
+```bash
+# Test authentication
+curl -H "X-API-Key: wrong-key" http://localhost:8000/api/v1/routes
+# Expected: 403 Forbidden
+
+curl -H "X-API-Key: $API_KEY" http://localhost:8000/api/v1/routes
+# Expected: 200 OK with route list
+```
+
+### Rate Limiting
+
+If you hit rate limits, wait 60 seconds or adjust limits in `api-service/src/main.py`:
+```python
+@limiter.limit("100/minute")  # Increase as needed
+```
+
+### Log Access
+
+```bash
+# View all logs in one place
+docker-compose logs -f
+
+# Service-specific logs
+docker-compose logs -f api-service
+docker-compose logs -f mqtt-ingestor
+docker-compose logs -f spark-processor
+
+
+```
+
+## Cleanup
+
+```bash
+# Stop services
+docker-compose down
+
+# Remove all data
+docker-compose down -v
+
+
+# Clean everything
+docker-compose down -v --rmi all
 ```
 

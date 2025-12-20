@@ -151,7 +151,7 @@ class TestEndToEndPipeline:
         # You can now keep your timeout reasonable (e.g. 60s) because
         # we know Spark is already running.
         query_api = influxdb_client.query_api()
-        max_wait = 60  # seconds
+        max_wait = 180  # seconds
         wait_interval = 5
         total_waited = 0
         

@@ -102,6 +102,75 @@ The implemented system follows a microservices architecture with five containeri
 - Time-range filtering using InfluxDB's efficient range scans
 - Automatic Pydantic validation of responses
 
+
+## Security and Audit Logging
+
+### API Authentication
+
+All data endpoints require API key authentication via `X-API-Key` header. Configure in `.env`:
+
+```bash
+# Generate secure key
+openssl rand -hex 32
+
+# Configure
+API_KEY=your-generated-key-here
+REQUIRE_AUTH=true
+```
+
+**Protected Endpoints**: `/api/v1/metrics`, `/api/v1/routes`, `/api/v1/routes/{route}/stats`  
+**Public Endpoints**: `/health`, `/` (root)
+
+**Usage**:
+```bash
+export API_KEY="your-key"
+curl -H "X-API-Key: $API_KEY" http://localhost:8000/api/v1/routes
+```
+
+**Error Codes**: `401` (missing key), `403` (invalid key), `429` (rate limit exceeded)
+
+### Rate Limiting
+
+- **Health endpoint**: 60 requests/minute
+- **Data endpoints**: 100 requests/minute
+- **Implementation**: SlowAPI library with IP-based limiting
+
+### Audit Logging
+
+All services emit structured JSON logs to stdout for security monitoring and compliance.
+
+**Log Format**:
+```json
+{
+  "timestamp": "2025-12-20T16:30:45.123Z",
+  "service": "service-name",
+  "event_type": "event_type",
+  "...": "additional context"
+}
+```
+
+**Logged Events**:
+- **API Service**: All requests (method, path, params, IP, response code), authentication attempts
+- **MQTT Ingestor**: Connections, subscriptions, message statistics (every 60s), errors
+- **Spark Processor**: Session creation, batch processing (batch ID, points written), InfluxDB writes
+
+**Viewing Logs**:
+```bash
+# Real-time audit events
+docker-compose logs -f | grep '"event_type"'
+
+# Service-specific
+docker-compose logs -f api-service | grep '"event_type":"api_request"'
+docker-compose logs -f mqtt-ingestor | grep '"event_type":"ingestion_stats"'
+docker-compose logs -f spark-processor | grep '"event_type":"batch_written"'
+
+# Export to files
+docker-compose logs --no-color api-service > logs/api-service.log
+grep '"event_type"' logs/api-service.log > logs/api-audit.log
+```
+
+**Production**: Configure Docker logging driver with rotation for long-term retention.
+
 ## Testing Methodology
 
 ### Unit Tests

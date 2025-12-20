@@ -1,13 +1,19 @@
-"""FastAPI application for querying historical transport metrics."""
+"""FastAPI application with authentication, rate limiting, and audit logging."""
 import logging
 import sys
+import json
 from datetime import datetime, timezone
 from typing import List, Optional
+from functools import wraps
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header, Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.exceptions import InfluxDBError
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from .config import Config
 from .models import (
@@ -16,15 +22,41 @@ from .models import (
 )
 
 
-# Initialize configuration and logging
+# Initialize configuration
 config = Config.from_env()
 
-logging.basicConfig(
-    level=getattr(logging, config.log_level),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stdout
-)
-logger = logging.getLogger(__name__)
+# Initialize structured logging
+class AuditLogger:
+    """Structured audit logger for API requests."""
+    
+    def __init__(self):
+        self.logger = logging.getLogger("api.audit")
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
+    
+    def log_request(self, request: Request, response_code: int, 
+                   user_id: Optional[str] = None, error: Optional[str] = None):
+        """Log API request with structured data."""
+        audit_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event_type": "api_request",
+            "method": request.method,
+            "path": request.url.path,
+            "query_params": dict(request.query_params),
+            "client_ip": request.client.host if request.client else "unknown",
+            "user_agent": request.headers.get("user-agent", "unknown"),
+            "user_id": user_id or "anonymous",
+            "response_code": response_code,
+            "error": error
+        }
+        self.logger.info(json.dumps(audit_entry))
+
+audit_logger = AuditLogger()
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -32,9 +64,34 @@ app = FastAPI(
     description="REST API for querying historical public transport metrics",
     version="1.0.0"
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# API Key authentication
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # Global InfluxDB client
 influxdb_client: Optional[InfluxDBClient] = None
+
+
+def verify_api_key(api_key: Optional[str] = Header(None, alias="X-API-Key")) -> str:
+    """Verify API key from request header."""
+    if not config.require_auth:
+        return "public"
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing API key. Provide X-API-Key header."
+        )
+    
+    if api_key != config.api_key:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API key"
+        )
+    
+    return api_key
 
 
 def get_influxdb_client() -> InfluxDBClient:
@@ -48,23 +105,59 @@ def get_influxdb_client() -> InfluxDBClient:
                 token=config.influxdb_token,
                 org=config.influxdb_org
             )
-            logger.info(f"Connected to InfluxDB at {config.influxdb_url}")
+            logging.info(f"Connected to InfluxDB at {config.influxdb_url}")
         except Exception as e:
-            logger.error(f"Failed to connect to InfluxDB: {e}")
+            logging.error(f"Failed to connect to InfluxDB: {e}")
             raise
     
     return influxdb_client
 
 
+@app.middleware("http")
+async def audit_middleware(request: Request, call_next):
+    """Log all API requests for audit trail."""
+    response = None
+    error_msg = None
+    
+    try:
+        response = await call_next(request)
+        return response
+    except Exception as e:
+        error_msg = str(e)
+        response = JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"}
+        )
+        return response
+    finally:
+        if response:
+            # Extract user from API key if present
+            api_key = request.headers.get("X-API-Key", "anonymous")
+            user_id = "authenticated" if api_key != "anonymous" else "anonymous"
+            
+            audit_logger.log_request(
+                request=request,
+                response_code=response.status_code if response else 500,
+                user_id=user_id,
+                error=error_msg
+            )
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup."""
-    logger.info("Starting API service...")
+    logging.info(json.dumps({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event_type": "service_startup",
+        "service": "api-service",
+        "version": "1.0.0"
+    }))
+    
     try:
         get_influxdb_client()
-        logger.info("API service started successfully")
+        logging.info("API service started successfully")
     except Exception as e:
-        logger.error(f"Failed to start API service: {e}")
+        logging.error(f"Failed to start API service: {e}")
 
 
 @app.on_event("shutdown")
@@ -72,26 +165,30 @@ async def shutdown_event():
     """Clean up connections on shutdown."""
     global influxdb_client
     
-    logger.info("Shutting down API service...")
+    logging.info(json.dumps({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event_type": "service_shutdown",
+        "service": "api-service"
+    }))
+    
     if influxdb_client:
         influxdb_client.close()
-    logger.info("API service stopped")
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint."""
+@limiter.limit("60/minute")
+async def health_check(request: Request):
+    """Health check endpoint (no authentication required)."""
     influxdb_connected = False
     
     try:
         client = get_influxdb_client()
-        # Try a simple query to verify connection
         query_api = client.query_api()
         query = f'from(bucket: "{config.influxdb_bucket}") |> range(start: -1m) |> limit(n: 1)'
         list(query_api.query(query))
         influxdb_connected = True
     except Exception as e:
-        logger.warning(f"Health check failed: {e}")
+        logging.warning(f"Health check failed: {e}")
     
     return HealthResponse(
         status="healthy" if influxdb_connected else "degraded",
@@ -101,20 +198,20 @@ async def health_check():
 
 
 @app.get("/api/v1/metrics", response_model=MetricsResponse)
+@limiter.limit("100/minute")
 async def get_metrics(
+    request: Request,
     route: Optional[str] = Query(None, description="Filter by route number"),
     direction: Optional[str] = Query(None, description="Filter by direction (1 or 2)"),
     window_type: Optional[str] = Query(None, description="Filter by window type"),
     start_time: Optional[datetime] = Query(None, description="Start of time range"),
     end_time: Optional[datetime] = Query(None, description="End of time range"),
-    limit: int = Query(1000, ge=1, le=10000, description="Maximum records to return")
+    limit: int = Query(1000, ge=1, le=10000, description="Maximum records to return"),
+    api_key: str = Header(None, alias="X-API-Key")
 ):
-    """
-    Query vehicle metrics with optional filters.
+    """Query vehicle metrics with optional filters (requires authentication)."""
+    verify_api_key(api_key)
     
-    Returns aggregated vehicle position metrics including vehicle counts,
-    average speeds, and delays for specified routes and time ranges.
-    """
     try:
         client = get_influxdb_client()
         query_api = client.query_api()
@@ -154,7 +251,7 @@ async def get_metrics(
               |> limit(n: {limit})
         '''
         
-        logger.debug(f"Executing query: {query}")
+        logging.debug(f"Executing query: {query}")
         
         # Execute query
         tables = query_api.query(query)
@@ -178,8 +275,16 @@ async def get_metrics(
                     )
                     metrics.append(metric)
                 except Exception as e:
-                    logger.warning(f"Failed to parse record: {e}")
+                    logging.warning(f"Failed to parse record: {e}")
                     continue
+        
+        logging.info(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event_type": "query_executed",
+            "endpoint": "/api/v1/metrics",
+            "records_returned": len(metrics),
+            "filters": {"route": route, "direction": direction, "window_type": window_type}
+        }))
         
         return MetricsResponse(
             count=len(metrics),
@@ -187,18 +292,22 @@ async def get_metrics(
         )
         
     except InfluxDBError as e:
-        logger.error(f"InfluxDB query error: {e}")
+        logging.error(f"InfluxDB query error: {e}")
         raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
+        logging.error(f"Unexpected error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @app.get("/api/v1/routes", response_model=List[str])
-async def get_routes():
-    """
-    Get list of all routes with available data.
-    """
+@limiter.limit("100/minute")
+async def get_routes(
+    request: Request,
+    api_key: str = Header(None, alias="X-API-Key")
+):
+    """Get list of all routes with available data (requires authentication)."""
+    verify_api_key(api_key)
+    
     try:
         client = get_influxdb_client()
         query_api = client.query_api()
@@ -220,25 +329,37 @@ async def get_routes():
                 if route:
                     routes.add(route)
         
-        return sorted(list(routes))
+        route_list = sorted(list(routes))
+        
+        logging.info(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event_type": "query_executed",
+            "endpoint": "/api/v1/routes",
+            "routes_returned": len(route_list)
+        }))
+        
+        return route_list
         
     except InfluxDBError as e:
-        logger.error(f"InfluxDB query error: {e}")
+        logging.error(f"InfluxDB query error: {e}")
         raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
+        logging.error(f"Unexpected error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @app.get("/api/v1/routes/{route}/stats", response_model=RouteStats)
+@limiter.limit("100/minute")
 async def get_route_stats(
+    request: Request,
     route: str,
     start_time: Optional[datetime] = Query(None, description="Start of time range"),
-    end_time: Optional[datetime] = Query(None, description="End of time range")
+    end_time: Optional[datetime] = Query(None, description="End of time range"),
+    api_key: str = Header(None, alias="X-API-Key")
 ):
-    """
-    Get aggregated statistics for a specific route.
-    """
+    """Get aggregated statistics for a specific route (requires authentication)."""
+    verify_api_key(api_key)
+    
     try:
         client = get_influxdb_client()
         query_api = client.query_api()
@@ -281,6 +402,13 @@ async def get_route_stats(
                 elif field == "avg_delay":
                     stats["avg_delay"] = value
         
+        logging.info(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event_type": "query_executed",
+            "endpoint": f"/api/v1/routes/{route}/stats",
+            "route": route
+        }))
+        
         return RouteStats(
             route=route,
             total_observations=stats["total_observations"],
@@ -290,10 +418,10 @@ async def get_route_stats(
         )
         
     except InfluxDBError as e:
-        logger.error(f"InfluxDB query error: {e}")
+        logging.error(f"InfluxDB query error: {e}")
         raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
+        logging.error(f"Unexpected error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
@@ -304,7 +432,8 @@ async def root():
         "service": "HSL Transport Analytics API",
         "version": "1.0.0",
         "documentation": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "authentication": "Required for data endpoints. Use X-API-Key header."
     }
 
 

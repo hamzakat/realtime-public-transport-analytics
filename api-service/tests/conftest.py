@@ -1,4 +1,4 @@
-"""Pytest fixtures for API service tests."""
+"""Pytest fixtures for API service tests with authentication support."""
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import Mock, MagicMock, patch
@@ -55,10 +55,31 @@ def sample_influxdb_records():
 
 
 @pytest.fixture
-def test_client():
-    """Create a test client for the FastAPI app."""
-    with patch('src.main.get_influxdb_client'):
+def test_api_key():
+    """Provide a test API key."""
+    return "test-api-key-12345"
+
+
+@pytest.fixture
+def mock_config(test_api_key):
+    """Provide a mock configuration with security settings."""
+    config = Mock()
+    config.influxdb_url = "http://localhost:8086"
+    config.influxdb_token = "test-token"
+    config.influxdb_org = "test-org"
+    config.influxdb_bucket = "test-bucket"
+    config.log_level = "INFO"
+    config.api_key = test_api_key
+    config.require_auth = False  # Default to False for easier testing
+    return config
+
+
+@pytest.fixture
+def test_client(mock_config):
+    """Create a test client for the FastAPI app with mocked config."""
+    with patch('src.main.get_influxdb_client'), \
+         patch('src.main.config', mock_config), \
+         patch('src.main.audit_logger'):
         from src.main import app
         client = TestClient(app)
         yield client
-

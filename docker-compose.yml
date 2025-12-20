@@ -117,7 +117,6 @@ services:
       - spark-ivy-cache:/root/.ivy2
       - spark-m2-cache:/root/.m2
       - spark-tmp-cache:/tmp/.ivy2
-      
     restart: unless-stopped
 
   api-service:
@@ -136,6 +135,8 @@ services:
       INFLUXDB_ORG: ${INFLUXDB_ORG:-hsl}
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-transport_metrics}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_KEY: ${API_KEY:-your-secret-api-key-change-me}
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-true}
     networks:
       - hsl-network
     restart: unless-stopped

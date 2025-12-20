@@ -32,6 +32,7 @@ htmlcov/
 .tox/
 .hypothesis/
 digest*
+logs/
 
 # IDEs
 .vscode/
