@@ -6,6 +6,7 @@ A scalable real-time data processing backend for analyzing high-frequency vehicl
 
 1. [Conception](docs/1-conception.md)
 2. [Development](docs/2-development.md)
+3. [Dashboard](docs/3-dashboard.md)
 
 ## Architecture
 
@@ -43,19 +44,19 @@ graph TB
         end
     end
     
-    subgraph output["<b>Consumer Layer</b>"]
-        G["<b>ML App</b><br/><i>(conceptual)</i>"]
-    end
+     subgraph output["<b>Consumer Layer</b>"]
+         G["<b>Dashboard</b><br/>Streamlit UI"]
+     end
     
     A -->|"MQTTs<br/>1Hz"| B
-    B -->|"produce<br/>raw events"| C
+    B -->|"produces<br/>raw events"| C
     Z -.->|manages| C
     C -->|"real-time<br/>stream"| D
     D -->|"real-time<br/>metrics"| E
-    D -->|"persist<br/>history"| F
-    E -->|"live<br/>analytics"| G
-    F --> H
-    H -.->|"on-demand<br/>analytics"| G
+    D -->|"persists<br/>history"| F
+     E -->|"live<br/>analytics"| G
+     F --> H
+     H -->|"provides historical<br/>analytics<br/>"| G 
     
     style ext fill:#eceff1,stroke:#37474f,stroke-width:3px,color:#1a1a1a
     style docker fill:#e3f2fd,stroke:#1976d2,stroke-width:4px,color:#1a1a1a
@@ -74,7 +75,7 @@ graph TB
     style E fill:#fff3e0,stroke:#ef6c00,stroke-width:2.5px,color:#e65100
     style F fill:#e8f5e9,stroke:#388e3c,stroke-width:2.5px,color:#1b5e20
     style H fill:#fce4ec,stroke:#c2185b,stroke-width:2.5px,color:#880e4f
-    style G fill:#ffffff,stroke:#9e9e9e,stroke-width:2.5px,color:#616161
+     style G fill:#fce4ec,stroke:#c2185b,stroke-width:2.5px,color:#880e4f
 ```
 
 **Core Components**:
@@ -83,6 +84,7 @@ graph TB
 - **Spark Streaming**: Windowed aggregations (10s tumbling, 60s sliding windows) with processing metrics
 - **InfluxDB**: Time-series persistence for historical queries
 - **FastAPI**: Secured REST interface with API key authentication and rate limiting
+- **Dashboard**: Streamlit UI for real-time and historical data visualization
 
 ## Tech Stack
 
@@ -93,6 +95,7 @@ graph TB
 | Stream Processing | Apache Spark | 3.5.0 |
 | Time-Series DB | InfluxDB | 2.7 |
 | API Service | FastAPI + SlowAPI | 0.115.0 / 0.1.9 |
+| Dashboard | Streamlit | 1.28.0 |
 | Orchestration | Docker Compose | 3.8 |
 
 ## Prerequisites
@@ -168,6 +171,7 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8000/api/v1/routes
 docker-compose run --rm mqtt-ingestor pytest tests/ -v
 docker-compose run --rm spark-processor pytest tests/ -v
 docker-compose run --rm api-service pytest tests/ -v
+docker-compose run --rm dashboard pytest tests/ -v
 
 # Integration tests
 docker-compose -f docker-compose.test.yml down
@@ -191,6 +195,7 @@ docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit
 **Rate Limits**: 100 requests/minute per endpoint
 
 **Interactive Documentation**: http://localhost:8000/docs
+**Dashboard Interface**: http://localhost:8501
 
 ## Example API Queries
 
@@ -226,14 +231,15 @@ curl -H "X-API-Key: $API_KEY" "http://localhost:8000/api/v1/routes/114/stats?sta
 
 ```
 realtime-data-pipeline/
-├── docker-compose.yml              # Service orchestration
-├── docker-compose.test.yml         # Test environment
-├── .env                            # Configuration (includes API_KEY)
-├── mqtt-ingestor/                  # MQTT → Kafka ingestion
-├── spark-processor/                # Stream processing & aggregation
-├── api-service/                    # REST API for queries
-├── integration-tests/              # End-to-end tests
-└── docs/                           # Documentation
+ ├── docker-compose.yml              # Service orchestration
+ ├── docker-compose.test.yml         # Test environment
+ ├── .env                            # Configuration (includes API_KEY)
+ ├── mqtt-ingestor/                  # MQTT → Kafka ingestion
+ ├── spark-processor/                # Stream processing & aggregation
+ ├── api-service/                    # REST API for queries
+ ├── dashboard/                       # Streamlit visualization UI
+ ├── integration-tests/              # End-to-end tests
+ └── docs/                           # Documentation
 ```
 
 ## Configuration

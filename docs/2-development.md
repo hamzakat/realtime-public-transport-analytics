@@ -4,15 +4,16 @@ This document provides a technical overview of the real-time data pipeline imple
 
 ## System Architecture
 
-The implemented system follows a microservices architecture with five containerized services orchestrated via Docker Compose. The architecture matches the conception phase design with a lambda-like pattern enabling both stream and batch processing capabilities.
+The implemented system follows a microservices architecture with six containerized services orchestrated via Docker Compose. The architecture matches the conception phase design with a lambda-like pattern enabling both stream and batch processing capabilities.
 
 ### Data Flow
 
 1. **Ingestion Layer**: Python service subscribes to HSL MQTT broker (`mqtt.hsl.fi:8883`) over TLS
 2. **Buffer Layer**: Kafka broker (with Zookeeper coordination) buffers raw vehicle events in `hfp-raw` topic
 3. **Processing Layer**: Spark Structured Streaming applies stateful windowed aggregations
-4. **Storage Layer**: Dual-sink pattern writes to both Kafka (`hfp-aggregated` topic) and InfluxDB
+4. **Storage Layer**: Dual-sink pattern writes to both Kafka (`htp-aggregated` topic) and InfluxDB
 5. **API Layer**: FastAPI service queries InfluxDB for historical analytics
+6. **Consumer Layer**: Streamlit dashboard consumes live data from Kafka and historical data from API for visualization
 
 ## Implementation Details
 
@@ -97,10 +98,23 @@ The implemented system follows a microservices architecture with five containeri
 - `GET /api/v1/routes` - List of routes with available data
 - `GET /api/v1/routes/{route}/stats` - Aggregated statistics per route
 
-**Query Optimization**:
-- Default limit: 1000 records (max: 10,000)
-- Time-range filtering using InfluxDB's efficient range scans
-- Automatic Pydantic validation of responses
+### 6. Dashboard (`dashboard/`)
+
+**Technology**: Streamlit 1.28.0, Pandas 2.1.1, Plotly 5.17.0, Confluent Kafka 2.6.1, Requests 2.31.0
+
+**Features**:
+- **Live Data Mode**: Consumes real-time metrics from `hfp-aggregated` Kafka topic
+- **Historical Data Mode**: Queries historical metrics via API service
+- **Dynamic Filters**: Dropdown menus for route number and direction selection
+- **Time Range Filter**: Historical queries support configurable time ranges (hours/days)
+- **Statistics Display**: Aggregated metrics (vehicle count, speed, delay)
+- **Auto Refresh**: Configurable auto-refresh for live data streaming
+- **Data Caching**: Shows latest cached values when no new live data available
+
+**Architecture**:
+- Dual data sources: Kafka (live) and HTTP API (historical)
+- Session state management for caching latest data
+- Conditional dropdowns: "All Routes/Directions" only in Live mode
 
 
 ## Security and Audit Logging
@@ -194,6 +208,12 @@ Each microservice includes pytest-based unit tests with >80% code coverage:
 - Error handling (database failures)
 - Health check logic
 
+**Dashboard** (`dashboard/tests/`):
+- Configuration loading from environment
+- API client initialization and request handling
+- Kafka consumer initialization
+- Data filtering logic
+
 **Test Execution**:
 ```
 docker-compose run --rm <service-name> pytest tests/ -v
@@ -209,6 +229,8 @@ End-to-end test suite (`integration-tests/`) validates complete pipeline:
 3. Message flow from Kafka raw → aggregated topics
 4. Data persistence in InfluxDB
 5. Query filtering by route
+
+**Note**: Integration tests cover the data pipeline components (ingestion, buffering, processing, storage, API) but **exclude the Dashboard (consumer) layer**. The dashboard is an MVP visualization tool that demonstrates downstream data consumption and is tested separately via unit tests.
 
 **Infrastructure**:
 - Separate `docker-compose.test.yml` for test isolation
@@ -240,6 +262,7 @@ influxdb (independent)
   ↓
 spark-processor (depends on: kafka, influxdb)
 api-service (depends on: influxdb)
+dashboard (depends on: kafka, api-service)
 ```
 
 ### Health Checks
@@ -247,6 +270,7 @@ api-service (depends on: influxdb)
 - **Kafka**: Topic listing via `kafka-topics` command
 - **InfluxDB**: HTTP ping via `/health` endpoint
 - **API Service**: HTTP GET to `/health` endpoint
+- **Dashboard**: HTTP GET to Streamlit port (8501) for web interface availability
 
 ### Resource Allocation
 
@@ -306,6 +330,7 @@ docker-compose up -d mqtt-ingestor spark-processor api-service
 - **Kafka Topics**: `docker-compose exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic hfp-raw`
 - **InfluxDB UI**: http://localhost:8086 (admin/adminpassword)
 - **API Docs**: http://localhost:8000/docs
+- **Dashboard**: http://localhost:8501
 
 
 
