@@ -98,6 +98,16 @@ graph TB
 | Dashboard | Streamlit | 1.28.0 |
 | Orchestration | Docker Compose | 3.8 |
 
+## Dashboard Screenshots
+
+| View | Description | Screenshot |
+|------|-------------|-----------|
+| Real-time Metrics | Live display of vehicle counts, speeds, and delays across routes | ![Real-time Metrics](docs/static/realtime-metrics.png) |
+| Historical Analytics | Time-series charts for analyzing trends over periods | ![Historical Analytics](docs/static/historical-analytics.png) |
+
+
+**Access Dashboard**: Navigate to `http://localhost:8501` once services are running.
+
 ## Prerequisites
 
 - Docker (v20.10+) & Docker Compose (v2.0+)
