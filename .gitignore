@@ -48,6 +48,7 @@ logs/
 # Environment
 .env.local
 .env.*.local
+.env
 
 # Data
 data/

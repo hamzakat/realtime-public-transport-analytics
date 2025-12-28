@@ -104,6 +104,7 @@ graph TB
 - 8GB RAM, 20GB disk space
 - Active internet connection
 
+
 ## Security Features
 
 ### API Authentication
@@ -118,12 +119,17 @@ All components emit structured JSON logs for security and governance:
 - **API Service**: Request/response audit trail with user identification
 
 
-
 ## Quick Start
 
-### 1. Configure Security
+### 1. Configure Security and Environment Variables
 
-Before starting, set a secure API key in `.env`:
+Before starting, create .env from the template:
+
+```bash
+cp .env.example .env
+```
+
+Then, set a secure API key in `.env`:
 
 ```bash
 # Generate a secure random key (Linux/Mac)
@@ -262,29 +268,6 @@ SPARK_EXECUTOR_MEMORY=2g
 LOG_LEVEL=INFO  # Options: DEBUG, INFO, WARN, ERROR
 ```
 
-## Security Best Practices
-
-1. **API Key Management**
-   - Generate a strong random key (32+ characters)
-   - Never commit API keys to version control
-   - Rotate keys periodically
-   - Use environment variables for deployment
-
-2. **Audit Logging**
-   - Review logs regularly for suspicious activity
-   - Archive logs for compliance requirements
-   - Monitor for failed authentication attempts
-
-3. **Rate Limiting**
-   - Default: 100 req/min per endpoint
-   - Adjust in code if needed for your use case
-   - Monitor for rate limit violations
-
-4. **Network Security**
-   - API exposed on localhost by default
-   - Use reverse proxy (nginx) for production
-   - Enable TLS/HTTPS in production
-   - Restrict Docker network access
 
 ## Monitoring Audit Logs
 
