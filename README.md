@@ -1,6 +1,6 @@
 # Real-Time Public Transport Analytics Platform
 
-A scalable real-time data processing backend for analyzing high-frequency vehicle positioning data from the [Helsinki Region Transport (HSL)](https://www.hsl.fi/en/hsl/open-data) system. The system ingests MQTT telemetry streams at one-second intervals, performs windowed aggregations using Apache Spark, and provides both real-time and historical analytics through a secured REST API. Built to meet the requirements of Task 2 *"Build a real-time data backend for a data-intensive application"* as a part of the Data Engineering course (DLMDSEDE02) at International University of Applied Sciences.
+A scalable real-time data processing backend for analyzing high-frequency vehicle positioning data from the [Helsinki Region Transport (HSL)](https://www.hsl.fi/en/hsl/open-data) system. The system ingests MQTT telemetry streams at one-second intervals, performs windowed aggregations using Apache Spark, and provides both real-time and historical analytics through a secured REST API. Built to meet the requirements of the task: *"Build a real-time data backend for a data-intensive application"*, as a part of the Data Engineering course (DLMDSEDE02) at Internationale Hochschule (IUBH) for my Master's in AI.
 
 ## Documentation
 
